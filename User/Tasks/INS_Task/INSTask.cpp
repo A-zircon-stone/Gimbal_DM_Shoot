@@ -14,6 +14,7 @@
 #include "usart.h"
 #include "PrintTelemetry.hpp"
 #include "Gimbal.hpp"
+#include "DamiaoPitchRuntime.hpp"
 #define MPU6500_TEMP_PWM_MAX 5000
 INS_t INS;
 IMU_Param_t IMU_Param;
@@ -63,6 +64,7 @@ void INS_Task(void)
     dt = DWT_GetDeltaT(&INS_DWT_Count);
     if (!isfinite(dt) || dt <= 0.0f || dt > 0.02f)
     {
+        damiao_pitch_runtime::invalidate_imu();
         // 调试暂停/超期后丢弃这一帧，不用巨大dt推进姿态。
         ++count;
         return;
@@ -73,6 +75,14 @@ void INS_Task(void)
     if ((count % 1) == 0)
     {
         BMI088_Read(&BMI088);
+
+        // ID 不匹配时驱动保留了上一次 Gyro，不能把它当成新的闭环反馈。
+        // 此检查仅涵盖陀螺 ID，不代表所有 SPI 传输和加速度计数据有效。
+        if (!BMI088_gyro_id_valid)
+        {
+            damiao_pitch_runtime::invalidate_imu();
+            return;
+        }
 
         INS.Accel[X_] = BMI088.Accel[X_];
         INS.Accel[Y_] = BMI088.Accel[Y_];
@@ -90,8 +100,10 @@ void INS_Task(void)
 
         // 核心函数,EKF更新四元数
         IMU_QuaternionEKF_Update(INS.Gyro[X_], INS.Gyro[Y_], INS.Gyro[Z_], INS.Accel[X_], INS.Accel[Y_], INS.Accel[Z_], dt);
-        if (!QEKF_INS.LastUpdateValid)
+        if (!QEKF_INS.LastUpdateValid) {
+            damiao_pitch_runtime::invalidate_imu();
             return;
+        }
 
         memcpy(INS.q, QEKF_INS.q, sizeof(QEKF_INS.q));
 
@@ -114,6 +126,8 @@ void INS_Task(void)
         INS.Pitch = QEKF_INS.Pitch;
         INS.Roll = QEKF_INS.Roll;
         INS.YawTotalAngle = QEKF_INS.YawTotalAngle;
+        // Roll 和 Gyro[Y_] 同一帧一起发布，不直接跨任务读取更新中的 INS。
+        damiao_pitch_runtime::publish_imu(INS.Roll, INS.Gyro[Y_], HAL_GetTick());
         Gimbal.Publish_Pitch_Feedback(INS.q, INS.Gyro[Y_]);
         publish_print_imu(INS.Roll, INS.Pitch, INS.Yaw, INS.Gyro, INS.q);
     }

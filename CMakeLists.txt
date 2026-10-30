@@ -52,6 +52,17 @@ add_executable(${CMAKE_PROJECT_NAME}
         User/Framework/GIMBAL/PitchTilt.hpp
         User/Framework/MOTOR/Motor.cpp
         User/Framework/MOTOR/Motor.hpp
+        User/Framework/MOTOR/DamiaoMit.hpp
+        User/Framework/MOTOR/DamiaoFeedbackHealth.hpp
+        User/Framework/MOTOR/DamiaoCan.hpp
+        User/Framework/MOTOR/DamiaoFeedbackMonitor.hpp
+        User/Framework/MOTOR/DamiaoV41.hpp
+        User/Framework/MOTOR/DamiaoV41Monitor.hpp
+        User/Framework/MOTOR/DamiaoMitPitchMonitor.hpp
+        User/Framework/MOTOR/DamiaoMitPitchCommand.hpp
+        User/Framework/MOTOR/DamiaoPitchPid.hpp
+        User/Framework/MOTOR/DamiaoPitchRuntime.hpp
+        User/Framework/MOTOR/DamiaoPitchRuntime.cpp
         User/Definitions.hpp
         User/Framework/WDG/Wdg.cpp
         User/Framework/PID/Pid.hpp

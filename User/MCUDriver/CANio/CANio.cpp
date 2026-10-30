@@ -11,6 +11,114 @@
 #include "usart.h"
 #include "PitchDirectionTest.hpp"
 
+namespace {
+// MIT 的接收观察器保留，但不参与 V41 一控四的接收流程。
+#if 0
+damiao_can::FeedbackMonitor damiao_feedback_monitor;
+#endif
+// pitch 已换成标准固件；保留 V41 接收器以供后续参考。
+#if 0
+damiao_v41::FeedbackMonitor damiao_v41_feedback_monitor;
+#endif
+damiao_mit_pitch::FeedbackMonitor damiao_mit_pitch_feedback_monitor;
+}
+
+#if 0 // 之前的 MIT 快照实现，保留供以后参考。
+damiao_can::FeedbackSnapshot damiao_feedback_snapshot()
+{
+    // 保存原中断状态，避免调用方原本已关中断时被错误地重新打开。
+    const uint32_t previous_mask = __get_PRIMASK();
+    __disable_irq();
+    const auto snapshot = damiao_feedback_monitor.snapshot();
+    __set_PRIMASK(previous_mask);
+    return snapshot;
+}
+#endif
+
+#if 0 // V41 快照实现保留，不用于现在的 pitch 电机。
+damiao_v41::FeedbackSnapshot damiao_v41_feedback_snapshot()
+{
+    // 防止 CAN 中断在复制一半时更新反馈；恢复调用前的中断状态。
+    const uint32_t previous_mask = __get_PRIMASK();
+    __disable_irq();
+    const auto snapshot = damiao_v41_feedback_monitor.snapshot();
+    __set_PRIMASK(previous_mask);
+    return snapshot;
+}
+#endif
+
+damiao_mit_pitch::FeedbackSnapshot damiao_mit_pitch_feedback_snapshot()
+{
+    const uint32_t previous_mask = __get_PRIMASK();
+    __disable_irq(); // 防止接收中断在复制快照期间更新数据
+    const auto snapshot = damiao_mit_pitch_feedback_monitor.snapshot();
+    __set_PRIMASK(previous_mask); // 恢复调用前状态，不能无条件开中断
+    return snapshot;
+}
+
+namespace {
+uint32_t damiao_pitch_pending_motion_mailboxes = 0;
+uint32_t damiao_pitch_disable_mailbox = 0;
+// 单帧非阻塞提交，成功仅代表进入邮箱；电机是否使能要以反馈状态确认。
+HAL_StatusTypeDef damiao_pitch_submit(const damiao_mit_pitch::CanFrame &frame, bool is_motion)
+{
+    CAN_TxHeaderTypeDef header{};
+    header.StdId = frame.standard_id;
+    header.IDE = CAN_ID_STD;
+    header.RTR = CAN_RTR_DATA;
+    header.DLC = 8;
+    uint32_t mailbox = 0;
+    // HAL 接口要求可写指针，但本函数不修改调用方的数据。
+    uint8_t bytes[8];
+    memcpy(bytes, frame.data, sizeof(bytes));
+    const HAL_StatusTypeDef result = HAL_CAN_AddTxMessage(&hcan1, &header, bytes, &mailbox);
+    if (result == HAL_OK && is_motion) damiao_pitch_pending_motion_mailboxes |= mailbox;
+    if (result == HAL_OK && !is_motion) damiao_pitch_disable_mailbox = mailbox;
+    return result;
+}
+}
+
+HAL_StatusTypeDef damiao_pitch_can_send_enable()
+{
+    if (!damiao_pitch_can_disable_tx_complete()) return HAL_BUSY;
+    damiao_mit_pitch::CanFrame frame{};
+    if (!damiao_mit_pitch::make_special_frame(damiao_mit_pitch::SpecialCommand::Enable, frame))
+        return HAL_ERROR;
+    return damiao_pitch_submit(frame, true);
+}
+
+HAL_StatusTypeDef damiao_pitch_can_send_disable()
+{
+    if (!damiao_pitch_can_disable_tx_complete()) return HAL_BUSY;
+    // 先取消邮箱里的旧控制帧，避免失能之后旧命令才发出。
+    // 当前 CAN1 只用于 pitch；日后接其他设备时需重新设计各邮箱的所有权。
+    if (damiao_pitch_pending_motion_mailboxes != 0) {
+        (void)HAL_CAN_AbortTxRequest(&hcan1, damiao_pitch_pending_motion_mailboxes);
+        damiao_pitch_pending_motion_mailboxes = 0;
+    }
+    damiao_mit_pitch::CanFrame frame{};
+    if (!damiao_mit_pitch::make_special_frame(damiao_mit_pitch::SpecialCommand::Disable, frame))
+        return HAL_ERROR;
+    // 如邮箱仍忙或总线错误，返回失败，调用方应保持失能状态并周期重试。
+    return damiao_pitch_submit(frame, false);
+}
+
+bool damiao_pitch_can_disable_tx_complete()
+{
+    // 只检查 CAN 外设邮箱状态，不能将邮箱空闲等同于电机确认收到。
+    if (damiao_pitch_disable_mailbox == 0) return true;
+    if (HAL_CAN_IsTxMessagePending(&hcan1, damiao_pitch_disable_mailbox)) return false;
+    damiao_pitch_disable_mailbox = 0;
+    return true;
+}
+
+HAL_StatusTypeDef damiao_pitch_can_send_control(const damiao_mit::Command &command)
+{
+    damiao_mit_pitch::CanFrame frame{};
+    if (!damiao_mit_pitch::make_control_frame(command, frame)) return HAL_ERROR;
+    return damiao_pitch_submit(frame, true);
+}
+
 HAL_StatusTypeDef Cmd_Pitch_Direction_Test(int16_t raw_current)
 {
     return Cmd_Gimbal_Raw_Current(0,raw_current);
@@ -143,13 +251,26 @@ void  HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan)
         rx_header.DLC != 8)
         return;
 
+    // 之前的 MIT 反馈分发保留，但 V41 一控四不使用 Master ID 作为周期反馈 ID。
+#if 0
     if (hcan == &hcan1)
-    {
-        if (rx_header.StdId == 0x204u + GimbalHardware::YawId)
-            Gimbal.Motor_Yaw.Update_Feedback(rx_header.StdId, rx_data, rx_header.DLC);
-        else if (rx_header.StdId == 0x204u + GimbalHardware::PitchId)
-            Gimbal.Motor_Pitch.Update_Feedback(rx_header.StdId, rx_data, rx_header.DLC);
-    }
+        (void)damiao_feedback_monitor.receive(true, rx_header.StdId, rx_data,
+                                             rx_header.DLC, HAL_GetTick());
+#endif
+    // 保留 V41 路径；pitch 已换用标准 MIT 固件，不能按此格式解析。
+#if 0
+    // 仅观察 CAN1 上的 V41 反馈。标准数据帧和 8 字节已在上方检查。
+    // 例如 pitch ID=5，帧头 ID=0x305；不在接收中断中发送任何电流命令。
+    if (hcan == &hcan1)
+        (void)damiao_v41_feedback_monitor.receive(rx_header.StdId, rx_data,
+                                                   rx_header.DLC, HAL_GetTick());
+#endif
+    // pitch 的 Master ID 是 0x63；只记录反馈，不在中断中发送或使能电机。
+    if (hcan == &hcan1)
+        (void)damiao_mit_pitch_feedback_monitor.receive(rx_header.StdId, rx_data,
+                                                        rx_header.DLC, HAL_GetTick());
+    return;
+#if 0 // 旧 6020/发射链路暂不运行，后续发射机构单独适配后再整理。
     if (GimbalHardware::FeedbackOnly)
         return; // 接收中断绝不顺带发送旧摩擦轮命令
     if (rx_header.StdId == 0x202) //左边摩擦轮
@@ -175,4 +296,5 @@ void  HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan)
         Gimbal.Refree_Elc = rx_data[5];
     }
     Cmd_Gimbal_Fric(0x200,Gimbal.Motor_Right_Fric.Output,Gimbal.Motor_Left_Fric.Output);
+#endif
 }

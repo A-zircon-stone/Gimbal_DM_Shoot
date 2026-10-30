@@ -142,6 +142,8 @@ extern bool_t bmi088_gyro_init(void);
 extern void BMI088_accel_read_over(uint8_t *rx_buf, fp32 accel[3], fp32 *time);
 extern void BMI088_gyro_read_over(uint8_t *rx_buf, fp32 gyro[3]);
 extern void BMI088_temperature_read_over(uint8_t *rx_buf, fp32 *temperate);
+// 本次 BMI088_Read 取得的陀螺芯片 ID 是否匹配；不代表所有 SPI 数据均正确。
+extern uint8_t BMI088_gyro_id_valid;
 extern void BMI088_Read(IMU_Data_t *bmi088);
 extern uint32_t get_BMI088_sensor_time(void);
 extern fp32 get_BMI088_temperate(void);

@@ -10,6 +10,7 @@
 #include "usbd_cdc.h"
 #include "debugc.hpp"
 #include "VisionLink.hpp"
+#include "DamiaoPitchRuntime.hpp"
 #include <cstring>
 #include <cstdio>
 
@@ -20,7 +21,9 @@ PrintTelemetry imu_frame{};
 uint32_t imu_last_ms = 0;
 PitchTilt pitch_tilt{}; // 仅INS任务在发布时更新
 // 独立、持久缓冲区：异步发送完成前不改写相应内容。
+#if 0 // 旧普通日志缓存，保留供恢复旧输出时使用
 char text[PrintTelemetryCapacity];
+#endif
 char vofa_text[PrintTelemetryCapacity];
 uint8_t uart_tx[PrintTelemetryCapacity];
 uint8_t usb_tx[PrintTelemetryCapacity];
@@ -159,14 +162,16 @@ void Task_Print(void *argument)
     TickType_t last_print = last_wake;
     for (;;)
     {
-        // 保留看门狗原来的2ms调用周期；打印独立降到10Hz。
+        // 保留看门狗原来的2ms调用周期；打印独立以50Hz运行。
         WatchDogFunction();
         const TickType_t now = xTaskGetTickCount();
-        const uint32_t period_ms=GimbalHardware::CommissioningMode || GimbalHardware::PitchSpeedTuneMode ? 20 : PrintTelemetryPeriodMs;
+        const uint32_t period_ms=20; // 达妙状态每 20ms 输出一次（50Hz），独立于 2ms 控制循环。
         if (static_cast<TickType_t>(now - last_print) >= pdMS_TO_TICKS(period_ms))
         {
             last_print = now;
             const PrintTelemetry data = capture_frame();
+            // 旧 6020 的 VOFA 格式暂时保留；当前周期输出改为下方的达妙 IMU 状态。
+#if 0
             const std::size_t size = PrintUart1FireWater ? 0 :
                 format_print_telemetry(text, sizeof(text), data);
             const std::size_t vofa_size = GimbalHardware::PitchSpeedTuneMode ?
@@ -174,6 +179,7 @@ void Task_Print(void *argument)
                 GimbalHardware::CommissioningMode ?
                 format_commissioning_telemetry(vofa_text,sizeof(vofa_text),data) :
                 format_vofa_telemetry(vofa_text, sizeof(vofa_text), data);
+#endif
             taskENTER_CRITICAL();
             const bool vision_status_requested=debug.vision_status_requested;
             const auto vision_control=Gimbal.Vision_Control;
@@ -243,7 +249,68 @@ void Task_Print(void *argument)
                     transmit_frame(error,sizeof(error)-1,error,sizeof(error)-1,&debug.pitch_status_requested);
                 }
             }
-            else transmit_frame(text, size, vofa_text, vofa_size);
+            else
+            {
+                // 发一行可读诊断。UART DMA 有自己的持久缓冲，忙时丢弃本帧；
+                // 收发独立，接收的 dm_* 命令不会因为打印在这里被覆盖。
+                const auto dm = damiao_pitch_runtime::snapshot();
+#if 0 // 旧的完整诊断行保留，需要排查故障时可恢复。
+                const int n = std::snprintf(vofa_text, sizeof(vofa_text),
+                    "dm:state=%u,reason=%s,online=%u,age_ms=%lu,rx=%lu,"
+                    "imu_ok=%u,imu_age=%lu,imu_rad=%.4f,target_rad=%.4f,"
+                    "target_min=%.4f,target_max=%.4f,imu_rad_s=%.4f,"
+                    "motor_rad=%.4f,motor_rad_s=%.4f,torque=%.4f,gravity_ff=%.4f,cmd=%.4f,"
+                    "status=%u,kp=%.3f,ki=%.3f,kd=%.3f,txerr=%lu,"
+                    "pid_fault=%u,pid_reason=%s,pid_angle=%.4f,pid_min=%.4f,pid_max=%.4f,pid_dt_ms=%lu\r\n",
+                    static_cast<unsigned>(dm.state), dm.reason,
+                    static_cast<unsigned>(dm.feedback_fresh),
+                    static_cast<unsigned long>(dm.feedback_age_ms),
+                    static_cast<unsigned long>(dm.feedback_count),
+                    static_cast<unsigned>(dm.imu_fresh), static_cast<unsigned long>(dm.imu_age_ms),
+                    static_cast<double>(dm.imu_angle),
+                    static_cast<double>(dm.target_position),
+                    static_cast<double>(dm.target_min),
+                    static_cast<double>(dm.target_max),
+                    static_cast<double>(dm.imu_velocity),
+                    static_cast<double>(dm.feedback.position),
+                    static_cast<double>(dm.feedback.velocity),
+                    static_cast<double>(dm.feedback.torque),
+                    static_cast<double>(dm.gravity_torque),
+                    static_cast<double>(dm.requested_torque),
+                    static_cast<unsigned>(dm.feedback.status),
+                    static_cast<double>(dm.kp), static_cast<double>(dm.ki),
+                    static_cast<double>(dm.kd), static_cast<unsigned long>(dm.tx_errors),
+                    static_cast<unsigned>(dm.pid_fault_seen),
+                    dm.pid_fault_reason,
+                    static_cast<double>(dm.pid_fault_angle), static_cast<double>(dm.pid_fault_min),
+                    static_cast<double>(dm.pid_fault_max), static_cast<unsigned long>(dm.pid_fault_dt_ms));
+#endif
+#if 0 // 保留原状态日志；与采样行混发会让FireWater误解析出额外零值通道。
+                // 状态日志后追加 FireWater 采样行，周期为 20ms（50Hz）。
+                // 通道0=IMU实际角度，通道1=目标角度，单位均为rad。
+                // 例如 pitch:-0.0800,0.1000 表示实际-0.08rad、目标0.10rad。
+                // 两行一起提交DMA，避免分开发送时第二行因UART忙而丢失。
+                const int n = std::snprintf(vofa_text, sizeof(vofa_text),
+                    "dm:state=%u,reason=%s,online=%u,imu_rad=%.4f,target_rad=%.4f,"
+                    "gravity_ff=%.4f,cmd=%.4f,kp=%.3f,ki=%.3f,kd=%.3f,\r\n"
+                    "pitch:%.4f,%.4f\r\n",
+                    static_cast<unsigned>(dm.state), dm.reason,
+                    static_cast<unsigned>(dm.feedback_fresh),
+                    static_cast<double>(dm.imu_angle), static_cast<double>(dm.target_position),
+                    static_cast<double>(dm.gravity_torque), static_cast<double>(dm.requested_torque),
+                    static_cast<double>(dm.kp), static_cast<double>(dm.ki), static_cast<double>(dm.kd),
+                    static_cast<double>(dm.imu_angle), static_cast<double>(dm.target_position));
+#endif
+                // FireWater每20ms只发送一组两通道数据，不混入key=value诊断文字。
+                // 通道0=imu_rad实际角度；通道1=target_rad目标角度，单位rad。
+                // 例如 0.1158,0.0963 表示实际0.1158rad、目标0.0963rad。
+                const int n = std::snprintf(vofa_text, sizeof(vofa_text),
+                    "%.4f,%.4f\r\n",
+                    static_cast<double>(dm.imu_angle), static_cast<double>(dm.target_position));
+                if (n > 0 && static_cast<std::size_t>(n) < sizeof(vofa_text))
+                    transmit_frame(vofa_text, static_cast<std::size_t>(n), vofa_text,
+                                   static_cast<std::size_t>(n), &debug.dm_status_requested);
+            }
         }
         vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(2));
     }

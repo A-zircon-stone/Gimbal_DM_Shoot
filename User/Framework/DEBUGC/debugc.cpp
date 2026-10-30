@@ -9,7 +9,21 @@
 #include <cstdlib> // 包含 strtof
 #include <cstdio>
 #include <cstdarg>
+#include <cmath>
 #include "usart.h"
+
+// 只接受完整、有限的数值，避免 nan/inf 或尾部乱码进入控制器。
+static bool parse_dm_float(const char *line, const char *prefix, float &value)
+{
+    const std::size_t prefix_length = std::strlen(prefix);
+    if (std::strncmp(line, prefix, prefix_length) != 0) return false;
+    const char *start = line + prefix_length;
+    char *end = nullptr;
+    const float parsed = std::strtof(start, &end);
+    if (end == start || *end != '\0' || !std::isfinite(parsed)) return false;
+    value = parsed;
+    return true;
+}
 
 // 将接收缓冲区放到特定的 RAM 区域
 uint8_t rx_buffer[DEBUG_RVSIZE];
@@ -45,6 +59,37 @@ void cDebug::rxCallback(UART_HandleTypeDef *huart, uint16_t size)
         {
             line[used]='\0';
             if(used && !overflow) ++pitch_rx_lines;
+            // 一条命令以回车或换行结束，可分多次 DMA 接收；空行会忽略。
+            if (!overflow && !std::strcmp(line, "dm_stop")) {
+                dm_stop_requested = true;
+                dm_enable_requested = false;
+                dm_target_pending = false;
+            }
+            if (!overflow && !std::strcmp(line, "dm_enable") && !dm_stop_requested)
+                dm_enable_requested = true;
+            if (!overflow && !std::strcmp(line, "dm_status")) dm_status_requested = true;
+            float dm_value = 0.0f;
+            // 例如 dm_target=0.10：绝对目标为 0.10 rad，不是增加 0.10 rad。
+            if (!overflow && !dm_stop_requested && parse_dm_float(line, "dm_target=", dm_value)) {
+                dm_target_rad = dm_value;
+                dm_target_pending = true;
+            }
+#if 0 // 原相对目标命令保留，但不再接收 dm_delta。
+            if (!overflow && !dm_stop_requested && parse_dm_float(line, "dm_delta=", dm_value)) {
+                dm_delta_rad = dm_value;
+                dm_delta_pending = true;
+            }
+#endif
+            // PID 数值先存入邮箱，由控制任务检查具体允许范围后使用。
+            if (!overflow && parse_dm_float(line, "dm_kp=", dm_value) && dm_value >= 0) {
+                dm_kp = dm_value; dm_gain_pending |= 1u;
+            }
+            if (!overflow && parse_dm_float(line, "dm_ki=", dm_value) && dm_value >= 0) {
+                dm_ki = dm_value; dm_gain_pending |= 2u;
+            }
+            if (!overflow && parse_dm_float(line, "dm_kd=", dm_value) && dm_value >= 0) {
+                dm_kd = dm_value; dm_gain_pending |= 4u;
+            }
             if(!overflow && !std::strcmp(line,"pitch_status")) pitch_status_requested=true;
             if(!overflow && !std::strcmp(line,"test")) test_reply_requested=true;
             if(!overflow && !std::strcmp(line,"vision_status")) vision_status_requested=true;

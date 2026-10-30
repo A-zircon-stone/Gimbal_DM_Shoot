@@ -13,9 +13,9 @@ constexpr bool SerialTestOnly = false; // 串口测试结束，恢复速度环�
 // 新云台测量阶段：上电零输出，PID/回位/遥控/视觉不驱动电机。
 constexpr bool CommissioningMode = false;
 constexpr bool PitchSpeedTuneMode = true; // 两轴上电捕获当前位置进入遥控位置环，仍支持串口切换速度环
-constexpr bool PitchSpeedDryRun = false; // 已接电机：使用Pitch反馈、发送电流、执行Roll限位
+constexpr bool PitchSpeedDryRun = true; // 达妙迁移期间禁止旧6020电流帧输出
 // 独立、人工触发的短脉冲测试例外；不解锁旧控制链路。
-constexpr bool PitchDirectionTestEnabled = true;
+constexpr bool PitchDirectionTestEnabled = false;
 constexpr uint8_t YawId = 1;
 constexpr uint8_t PitchId = 3;
 constexpr uint32_t FeedbackTimeoutMs = 100;

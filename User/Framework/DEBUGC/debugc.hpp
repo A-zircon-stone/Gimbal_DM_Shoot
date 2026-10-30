@@ -24,6 +24,21 @@ public:
     void rxCallback(UART_HandleTypeDef *huart, uint16_t size); // 覆盖基类方法以防调用到双缓冲相关引发卡死
     void usart_printf(const char* format, ...);
     // IRQ写入；GIMBAL任务在临界区取走。停止命令优先，不被后续命令覆盖。
+    // 达妙 Pitch 命令由 UART 中断写入，控制任务必须在临界区复制并清除。
+    // stop 优先：尚未被控制任务取走时，后续 enable 和 target 不会覆盖它。
+    volatile bool dm_stop_requested = false;
+    volatile bool dm_enable_requested = false;
+    volatile bool dm_target_pending = false;
+    volatile float dm_target_rad = 0.0f; // 绝对 IMU 目标角度，单位 rad
+#if 0 // 旧的相对角度接口保留；现在用 dm_target 直接指定角度。
+    volatile bool dm_delta_pending = false;
+    volatile float dm_delta_rad = 0.0f;
+#endif
+    volatile uint8_t dm_gain_pending = 0; // bit0=kp, bit1=ki, bit2=kd
+    volatile float dm_kp = 0.0f;
+    volatile float dm_ki = 0.0f;
+    volatile float dm_kd = 0.0f;
+    volatile bool dm_status_requested = false;
     volatile PitchTestRequest pitch_request = PitchTestRequest::None;
     volatile uint32_t pitch_request_ms = 0;
     volatile float pitch_delta_deg = 0;

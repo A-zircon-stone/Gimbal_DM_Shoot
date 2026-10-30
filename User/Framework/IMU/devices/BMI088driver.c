@@ -544,6 +544,9 @@ void BMI088_gyro_read_over(uint8_t *rx_buf, fp32 gyro[3])
     gyro[2] = bmi088_raw_temp * BMI088_GYRO_SEN;
 }
 
+// 只反映最近一帧陀螺芯片 ID 检查，不能证明加速度数据或整个 SPI 通道正常。
+uint8_t BMI088_gyro_id_valid = 0;
+
 void BMI088_Read(IMU_Data_t *bmi088)
 {
     static uint8_t buf[8] = {0, 0, 0, 0, 0, 0};
@@ -559,7 +562,8 @@ void BMI088_Read(IMU_Data_t *bmi088)
     bmi088->Accel[2] = bmi088_raw_temp * BMI088_ACCEL_SEN * bmi088->AccelScale;
 
     BMI088_gyro_read_muli_reg(BMI088_GYRO_CHIP_ID, buf, 8);
-    if (buf[0] == BMI088_GYRO_CHIP_ID_VALUE)
+    BMI088_gyro_id_valid = (buf[0] == BMI088_GYRO_CHIP_ID_VALUE);
+    if (BMI088_gyro_id_valid)
     {
         if (caliOffset)
         {
