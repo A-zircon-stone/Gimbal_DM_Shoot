@@ -22,6 +22,12 @@ int main()
     d.pitch_y_deg = 105.25f;
     d.pitch_y_valid = true;
     char text[PrintTelemetryCapacity];
+    assert(format_imu_attitude(text,sizeof(text),d)>0);
+    assert(std::strcmp(text,"-12.2500,8.5000,179.0000\r\n")==0);
+    assert(format_imu_attitude(text,2,d)==0 && text[0]=='\0');
+    d.imu_fresh=false;
+    assert(format_imu_attitude(text,sizeof(text),d)==0);
+    d.imu_fresh=true;
     const auto size = format_print_telemetry(text, sizeof(text), d);
     assert(size > 0 && size == std::strlen(text));
     assert(std::strstr(text, "t=1234 N=1000 IMU=1 R=-12.25 P=+8.50 Y=+179.00"));

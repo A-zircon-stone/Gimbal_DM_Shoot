@@ -63,6 +63,7 @@ add_executable(${CMAKE_PROJECT_NAME}
         User/Framework/MOTOR/DamiaoPitchPid.hpp
         User/Framework/MOTOR/DamiaoPitchRuntime.hpp
         User/Framework/MOTOR/DamiaoPitchRuntime.cpp
+        User/Framework/MOTOR/DamiaoYawRuntime.cpp
         User/Definitions.hpp
         User/Framework/WDG/Wdg.cpp
         User/Framework/PID/Pid.hpp

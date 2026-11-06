@@ -60,5 +60,7 @@ std::size_t format_print_telemetry(char *out, std::size_t capacity,
 std::size_t format_vofa_telemetry(char *out, std::size_t capacity,
                                 const PrintTelemetry &data);
 // INS任务完成一整帧后调用；仅复制数据，不做格式化或I/O。
+// imucheck 三通道：原始 INS Roll、Pitch、Yaw，单位度；无有效新帧时不输出。
+std::size_t format_imu_attitude(char *out, std::size_t capacity, const PrintTelemetry &data);
 void publish_print_imu(float roll_deg, float pitch_deg, float yaw_deg,
                        const float gyro_rad[3], const float q[4]);

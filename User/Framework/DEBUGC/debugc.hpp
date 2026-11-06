@@ -55,6 +55,7 @@ public:
     volatile float yaw_delta_deg=0;
     volatile bool yaw_delta_pending=false;
     volatile bool yaw_stop_requested=false;
+    volatile bool yaw_enable_requested=false;
     volatile bool vision_disable_requested=false;
     volatile bool vision_mode_pending=false;
     volatile uint8_t vision_mode=0;
@@ -63,6 +64,7 @@ public:
     volatile bool vision_status_requested=false;
     volatile bool pitch_status_requested = false;
     volatile bool test_reply_requested = false;
+    volatile bool imu_check_enabled = false; // imucheck 每次完整命令切换姿态打印
     volatile uint32_t pitch_rx_lines = 0;
     volatile uint32_t uart_rx_bytes = 0;
     volatile uint32_t uart_rx_events = 0;

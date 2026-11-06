@@ -2,6 +2,19 @@
 #include <cmath>
 #include <cstdio>
 
+std::size_t format_imu_attitude(char *out, std::size_t capacity, const PrintTelemetry &d)
+{
+    if (!out || !capacity) return 0;
+    out[0]='\0';
+    if (!d.imu_fresh || !std::isfinite(d.roll_deg) ||
+        !std::isfinite(d.pitch_deg) || !std::isfinite(d.yaw_deg)) return 0;
+    const int n=std::snprintf(out,capacity,"%.4f,%.4f,%.4f\r\n",
+        static_cast<double>(d.roll_deg),static_cast<double>(d.pitch_deg),
+        static_cast<double>(d.yaw_deg));
+    if (n<0 || static_cast<std::size_t>(n)>=capacity) { out[0]='\0'; return 0; }
+    return static_cast<std::size_t>(n);
+}
+
 std::size_t format_gimbal_angles(char *out,std::size_t capacity,const PrintTelemetry &d)
 {
     if(!out || !capacity) return 0;

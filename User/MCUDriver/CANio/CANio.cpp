@@ -10,6 +10,7 @@
 #include "Gimbal.hpp"
 #include "usart.h"
 #include "PitchDirectionTest.hpp"
+#include "DamiaoMailboxOwners.hpp"
 
 namespace {
 // MIT 的接收观察器保留，但不参与 V41 一控四的接收流程。
@@ -21,6 +22,7 @@ damiao_can::FeedbackMonitor damiao_feedback_monitor;
 damiao_v41::FeedbackMonitor damiao_v41_feedback_monitor;
 #endif
 damiao_mit_pitch::FeedbackMonitor damiao_mit_pitch_feedback_monitor;
+damiao_mit_yaw::FeedbackMonitor damiao_mit_yaw_feedback_monitor;
 }
 
 #if 0 // 之前的 MIT 快照实现，保留供以后参考。
@@ -56,9 +58,17 @@ damiao_mit_pitch::FeedbackSnapshot damiao_mit_pitch_feedback_snapshot()
     return snapshot;
 }
 
+damiao_mit_yaw::FeedbackSnapshot damiao_mit_yaw_feedback_snapshot()
+{
+    const uint32_t mask = __get_PRIMASK();
+    __disable_irq();
+    const auto snapshot = damiao_mit_yaw_feedback_monitor.snapshot();
+    __set_PRIMASK(mask);
+    return snapshot;
+}
+
 namespace {
-uint32_t damiao_pitch_pending_motion_mailboxes = 0;
-uint32_t damiao_pitch_disable_mailbox = 0;
+DamiaoMailboxOwners owners;
 // 单帧非阻塞提交，成功仅代表进入邮箱；电机是否使能要以反馈状态确认。
 HAL_StatusTypeDef damiao_pitch_submit(const damiao_mit_pitch::CanFrame &frame, bool is_motion)
 {
@@ -72,8 +82,11 @@ HAL_StatusTypeDef damiao_pitch_submit(const damiao_mit_pitch::CanFrame &frame, b
     uint8_t bytes[8];
     memcpy(bytes, frame.data, sizeof(bytes));
     const HAL_StatusTypeDef result = HAL_CAN_AddTxMessage(&hcan1, &header, bytes, &mailbox);
-    if (result == HAL_OK && is_motion) damiao_pitch_pending_motion_mailboxes |= mailbox;
-    if (result == HAL_OK && !is_motion) damiao_pitch_disable_mailbox = mailbox;
+    if (result == HAL_OK) {
+        owners.reuse(mailbox);
+        if (is_motion) owners.pitch_motion |= mailbox;
+        else owners.pitch_disable = mailbox;
+    }
     return result;
 }
 }
@@ -91,10 +104,9 @@ HAL_StatusTypeDef damiao_pitch_can_send_disable()
 {
     if (!damiao_pitch_can_disable_tx_complete()) return HAL_BUSY;
     // 先取消邮箱里的旧控制帧，避免失能之后旧命令才发出。
-    // 当前 CAN1 只用于 pitch；日后接其他设备时需重新设计各邮箱的所有权。
-    if (damiao_pitch_pending_motion_mailboxes != 0) {
-        (void)HAL_CAN_AbortTxRequest(&hcan1, damiao_pitch_pending_motion_mailboxes);
-        damiao_pitch_pending_motion_mailboxes = 0;
+    if (owners.pitch_motion != 0) {
+        (void)HAL_CAN_AbortTxRequest(&hcan1, owners.pitch_motion);
+        owners.pitch_motion = 0;
     }
     damiao_mit_pitch::CanFrame frame{};
     if (!damiao_mit_pitch::make_special_frame(damiao_mit_pitch::SpecialCommand::Disable, frame))
@@ -106,9 +118,9 @@ HAL_StatusTypeDef damiao_pitch_can_send_disable()
 bool damiao_pitch_can_disable_tx_complete()
 {
     // 只检查 CAN 外设邮箱状态，不能将邮箱空闲等同于电机确认收到。
-    if (damiao_pitch_disable_mailbox == 0) return true;
-    if (HAL_CAN_IsTxMessagePending(&hcan1, damiao_pitch_disable_mailbox)) return false;
-    damiao_pitch_disable_mailbox = 0;
+    if (owners.pitch_disable == 0) return true;
+    if (HAL_CAN_IsTxMessagePending(&hcan1, owners.pitch_disable)) return false;
+    owners.pitch_disable = 0;
     return true;
 }
 
@@ -117,6 +129,54 @@ HAL_StatusTypeDef damiao_pitch_can_send_control(const damiao_mit::Command &comma
     damiao_mit_pitch::CanFrame frame{};
     if (!damiao_mit_pitch::make_control_frame(command, frame)) return HAL_ERROR;
     return damiao_pitch_submit(frame, true);
+}
+
+namespace {
+HAL_StatusTypeDef damiao_yaw_submit(const damiao_mit_yaw::CanFrame &frame, bool motion)
+{
+    CAN_TxHeaderTypeDef header{};
+    header.StdId=frame.standard_id; header.IDE=CAN_ID_STD; header.RTR=CAN_RTR_DATA; header.DLC=8;
+    uint32_t mailbox=0;
+    uint8_t bytes[8]; std::memcpy(bytes,frame.data,sizeof(bytes));
+    const auto result=HAL_CAN_AddTxMessage(&hcan1,&header,bytes,&mailbox);
+    if (result == HAL_OK) {
+        owners.reuse(mailbox);
+        if (motion) owners.yaw_motion |= mailbox;
+        else owners.yaw_disable = mailbox;
+    }
+    return result;
+}
+}
+bool damiao_yaw_can_disable_tx_complete()
+{
+    if (!owners.yaw_disable) return true;
+    if (HAL_CAN_IsTxMessagePending(&hcan1,owners.yaw_disable)) return false;
+    owners.yaw_disable=0;
+    return true;
+}
+HAL_StatusTypeDef damiao_yaw_can_send_enable()
+{
+    if (!damiao_yaw_can_disable_tx_complete()) return HAL_BUSY;
+    damiao_mit_yaw::CanFrame frame{};
+    if (!damiao_mit_yaw::make_special_frame(damiao_mit_yaw::SpecialCommand::Enable,frame)) return HAL_ERROR;
+    return damiao_yaw_submit(frame,true);
+}
+HAL_StatusTypeDef damiao_yaw_can_send_disable()
+{
+    if (!damiao_yaw_can_disable_tx_complete()) return HAL_BUSY;
+    if (owners.yaw_motion) {
+        (void)HAL_CAN_AbortTxRequest(&hcan1,owners.yaw_motion);
+        owners.yaw_motion=0;
+    }
+    damiao_mit_yaw::CanFrame frame{};
+    if (!damiao_mit_yaw::make_special_frame(damiao_mit_yaw::SpecialCommand::Disable,frame)) return HAL_ERROR;
+    return damiao_yaw_submit(frame,false);
+}
+HAL_StatusTypeDef damiao_yaw_can_send_control(const damiao_mit::Command &command)
+{
+    damiao_mit_yaw::CanFrame frame{};
+    if (!damiao_mit_yaw::make_control_frame(command,frame)) return HAL_ERROR;
+    return damiao_yaw_submit(frame,true);
 }
 
 HAL_StatusTypeDef Cmd_Pitch_Direction_Test(int16_t raw_current)
@@ -266,9 +326,12 @@ void  HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan)
                                                    rx_header.DLC, HAL_GetTick());
 #endif
     // pitch 的 Master ID 是 0x63；只记录反馈，不在中断中发送或使能电机。
-    if (hcan == &hcan1)
+    if (hcan == &hcan1) {
         (void)damiao_mit_pitch_feedback_monitor.receive(rx_header.StdId, rx_data,
                                                         rx_header.DLC, HAL_GetTick());
+        (void)damiao_mit_yaw_feedback_monitor.receive(rx_header.StdId, rx_data,
+                                                      rx_header.DLC, HAL_GetTick());
+    }
     return;
 #if 0 // 旧 6020/发射链路暂不运行，后续发射机构单独适配后再整理。
     if (GimbalHardware::FeedbackOnly)

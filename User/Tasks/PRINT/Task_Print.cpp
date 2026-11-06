@@ -11,6 +11,10 @@
 #include "debugc.hpp"
 #include "VisionLink.hpp"
 #include "DamiaoPitchRuntime.hpp"
+#include "DamiaoYawRuntime.hpp"
+#include "GimbalTuning.hpp"
+#include "remotec.hpp"
+#include "usartio.hpp"
 #include <cstring>
 #include <cstdio>
 
@@ -165,7 +169,7 @@ void Task_Print(void *argument)
         // 保留看门狗原来的2ms调用周期；打印独立以50Hz运行。
         WatchDogFunction();
         const TickType_t now = xTaskGetTickCount();
-        const uint32_t period_ms=20; // 达妙状态每 20ms 输出一次（50Hz），独立于 2ms 控制循环。
+        const uint32_t period_ms=gimbal_tuning::timing::TelemetryPeriodMs; // 独立于控制循环。
         if (static_cast<TickType_t>(now - last_print) >= pdMS_TO_TICKS(period_ms))
         {
             last_print = now;
@@ -188,6 +192,7 @@ void Task_Print(void *argument)
             const auto yaw_tune=Gimbal.Yaw_Speed_Tune;
             const bool status_requested=debug.pitch_status_requested;
             const bool test_requested=debug.test_reply_requested;
+            const bool imu_check_enabled=debug.imu_check_enabled;
             const auto tune=Gimbal.Pitch_Speed_Tune;
             const uint32_t rx_lines=debug.pitch_rx_lines;
             const uint32_t rx_bytes=debug.uart_rx_bytes;
@@ -205,18 +210,38 @@ void Task_Print(void *argument)
                 // UART忙时保留请求，下一轮重试。
                 transmit_frame("ok\r\n",4,"ok\r\n",4,&debug.test_reply_requested);
             }
+            else if(imu_check_enabled)
+            {
+                // 同一帧的原始姿态角：Roll、Pitch、Yaw（度），替代常规四通道。
+                const auto n=format_imu_attitude(vofa_text,sizeof(vofa_text),data);
+                if(n) transmit_frame(vofa_text,n,vofa_text,n);
+            }
             else if(vision_status_requested)
             {
+                const auto remote = dr16.value();
+                const auto pitch_runtime = damiao_pitch_runtime::snapshot();
+                const auto yaw_runtime = damiao_yaw_runtime::snapshot();
                 const int n=std::snprintf(vofa_text,sizeof(vofa_text),
                     "vision_status:enabled=%u,active=%u,RC_online=%u,up_mode=%u,enemy=%u,rx=%lu,age_ms=%lu,"
-                    "down_mode=%u,fire=%u,reason=%s,Y_enabled=%u,P_enabled=%u,Y_target=%.2f,P_target=%.2f\r\n",
+                    "down_mode=%u,fire=%u,reason=%s,legacy_Y_enabled=%u,legacy_P_enabled=%u,"
+                    "legacy_Y_target=%.2f,legacy_P_target=%.2f,ctrl=%u,S1=%u,S2=%u,ch0=%d,ch1=%d,"
+                    "P_state=%u,P_reason=%s,P_imu=%u,P_fb=%u,P_dm_target=%.4f,"
+                    "Y_state=%u,Y_reason=%s,Y_imu=%u,Y_fb=%u,Y_dm_target=%.4f\r\n",
                     static_cast<unsigned>(vision_control.enabled),static_cast<unsigned>(vision_control.active),
                     static_cast<unsigned>(vision_control.remote_online),
                     static_cast<unsigned>(vision_control.uplink_mode()),static_cast<unsigned>(vision_control.enemy_color),
                     static_cast<unsigned long>(vision_sequence),static_cast<unsigned long>(HAL_GetTick()-vision_ms),
                     static_cast<unsigned>(vision_packet.mode),static_cast<unsigned>(vision_packet.fire),vision_control.reason,
                     static_cast<unsigned>(yaw_tune.enabled),static_cast<unsigned>(tune.enabled),
-                    static_cast<double>(yaw_tune.target_yaw_deg),static_cast<double>(tune.target_roll_deg));
+                    static_cast<double>(yaw_tune.target_yaw_deg),static_cast<double>(tune.target_roll_deg),
+                    static_cast<unsigned>(CtrlMode),static_cast<unsigned>(static_cast<unsigned char>(remote.rc.s[0])),
+                    static_cast<unsigned>(static_cast<unsigned char>(remote.rc.s[1])),
+                    static_cast<int>(remote.rc.ch[0]),static_cast<int>(remote.rc.ch[1]),
+                    static_cast<unsigned>(pitch_runtime.state),pitch_runtime.reason,
+                    static_cast<unsigned>(pitch_runtime.imu_fresh),static_cast<unsigned>(pitch_runtime.feedback_fresh),
+                    static_cast<double>(pitch_runtime.target_position),static_cast<unsigned>(yaw_runtime.state),
+                    yaw_runtime.reason,static_cast<unsigned>(yaw_runtime.imu_fresh),
+                    static_cast<unsigned>(yaw_runtime.feedback_fresh),static_cast<double>(yaw_runtime.target));
                 if(n>0 && static_cast<std::size_t>(n)<sizeof(vofa_text))
                     transmit_frame(vofa_text,n,vofa_text,n,&debug.vision_status_requested);
                 else
@@ -253,7 +278,7 @@ void Task_Print(void *argument)
             {
                 // 发一行可读诊断。UART DMA 有自己的持久缓冲，忙时丢弃本帧；
                 // 收发独立，接收的 dm_* 命令不会因为打印在这里被覆盖。
-                const auto dm = damiao_pitch_runtime::snapshot();
+                const auto pitch = damiao_pitch_runtime::snapshot();
 #if 0 // 旧的完整诊断行保留，需要排查故障时可恢复。
                 const int n = std::snprintf(vofa_text, sizeof(vofa_text),
                     "dm:state=%u,reason=%s,online=%u,age_ms=%lu,rx=%lu,"
@@ -262,28 +287,28 @@ void Task_Print(void *argument)
                     "motor_rad=%.4f,motor_rad_s=%.4f,torque=%.4f,gravity_ff=%.4f,cmd=%.4f,"
                     "status=%u,kp=%.3f,ki=%.3f,kd=%.3f,txerr=%lu,"
                     "pid_fault=%u,pid_reason=%s,pid_angle=%.4f,pid_min=%.4f,pid_max=%.4f,pid_dt_ms=%lu\r\n",
-                    static_cast<unsigned>(dm.state), dm.reason,
-                    static_cast<unsigned>(dm.feedback_fresh),
-                    static_cast<unsigned long>(dm.feedback_age_ms),
-                    static_cast<unsigned long>(dm.feedback_count),
-                    static_cast<unsigned>(dm.imu_fresh), static_cast<unsigned long>(dm.imu_age_ms),
-                    static_cast<double>(dm.imu_angle),
-                    static_cast<double>(dm.target_position),
-                    static_cast<double>(dm.target_min),
-                    static_cast<double>(dm.target_max),
-                    static_cast<double>(dm.imu_velocity),
-                    static_cast<double>(dm.feedback.position),
-                    static_cast<double>(dm.feedback.velocity),
-                    static_cast<double>(dm.feedback.torque),
-                    static_cast<double>(dm.gravity_torque),
-                    static_cast<double>(dm.requested_torque),
-                    static_cast<unsigned>(dm.feedback.status),
-                    static_cast<double>(dm.kp), static_cast<double>(dm.ki),
-                    static_cast<double>(dm.kd), static_cast<unsigned long>(dm.tx_errors),
-                    static_cast<unsigned>(dm.pid_fault_seen),
-                    dm.pid_fault_reason,
-                    static_cast<double>(dm.pid_fault_angle), static_cast<double>(dm.pid_fault_min),
-                    static_cast<double>(dm.pid_fault_max), static_cast<unsigned long>(dm.pid_fault_dt_ms));
+                    static_cast<unsigned>(pitch.state), pitch.reason,
+                    static_cast<unsigned>(pitch.feedback_fresh),
+                    static_cast<unsigned long>(pitch.feedback_age_ms),
+                    static_cast<unsigned long>(pitch.feedback_count),
+                    static_cast<unsigned>(pitch.imu_fresh), static_cast<unsigned long>(pitch.imu_age_ms),
+                    static_cast<double>(pitch.imu_angle),
+                    static_cast<double>(pitch.target_position),
+                    static_cast<double>(pitch.target_min),
+                    static_cast<double>(pitch.target_max),
+                    static_cast<double>(pitch.imu_velocity),
+                    static_cast<double>(pitch.feedback.position),
+                    static_cast<double>(pitch.feedback.velocity),
+                    static_cast<double>(pitch.feedback.torque),
+                    static_cast<double>(pitch.gravity_torque),
+                    static_cast<double>(pitch.requested_torque),
+                    static_cast<unsigned>(pitch.feedback.status),
+                    static_cast<double>(pitch.kp), static_cast<double>(pitch.ki),
+                    static_cast<double>(pitch.kd), static_cast<unsigned long>(pitch.tx_errors),
+                    static_cast<unsigned>(pitch.pid_fault_seen),
+                    pitch.pid_fault_reason,
+                    static_cast<double>(pitch.pid_fault_angle), static_cast<double>(pitch.pid_fault_min),
+                    static_cast<double>(pitch.pid_fault_max), static_cast<unsigned long>(pitch.pid_fault_dt_ms));
 #endif
 #if 0 // 保留原状态日志；与采样行混发会让FireWater误解析出额外零值通道。
                 // 状态日志后追加 FireWater 采样行，周期为 20ms（50Hz）。
@@ -294,19 +319,21 @@ void Task_Print(void *argument)
                     "dm:state=%u,reason=%s,online=%u,imu_rad=%.4f,target_rad=%.4f,"
                     "gravity_ff=%.4f,cmd=%.4f,kp=%.3f,ki=%.3f,kd=%.3f,\r\n"
                     "pitch:%.4f,%.4f\r\n",
-                    static_cast<unsigned>(dm.state), dm.reason,
-                    static_cast<unsigned>(dm.feedback_fresh),
-                    static_cast<double>(dm.imu_angle), static_cast<double>(dm.target_position),
-                    static_cast<double>(dm.gravity_torque), static_cast<double>(dm.requested_torque),
-                    static_cast<double>(dm.kp), static_cast<double>(dm.ki), static_cast<double>(dm.kd),
-                    static_cast<double>(dm.imu_angle), static_cast<double>(dm.target_position));
+                    static_cast<unsigned>(pitch.state), pitch.reason,
+                    static_cast<unsigned>(pitch.feedback_fresh),
+                    static_cast<double>(pitch.imu_angle), static_cast<double>(pitch.target_position),
+                    static_cast<double>(pitch.gravity_torque), static_cast<double>(pitch.requested_torque),
+                    static_cast<double>(pitch.kp), static_cast<double>(pitch.ki), static_cast<double>(pitch.kd),
+                    static_cast<double>(pitch.imu_angle), static_cast<double>(pitch.target_position));
 #endif
-                // FireWater每20ms只发送一组两通道数据，不混入key=value诊断文字。
-                // 通道0=imu_rad实际角度；通道1=target_rad目标角度，单位rad。
-                // 例如 0.1158,0.0963 表示实际0.1158rad、目标0.0963rad。
+                // FireWater 每次输出四通道纯数字，不混入 key=value 诊断文字。
+                // 通道0/1=Pitch实际/目标，通道2/3=Yaw实际/目标，单位rad。
+                // 输出周期见 GimbalTuning.hpp 的 TelemetryPeriodMs。
+                const auto yaw = damiao_yaw_runtime::snapshot();
                 const int n = std::snprintf(vofa_text, sizeof(vofa_text),
-                    "%.4f,%.4f\r\n",
-                    static_cast<double>(dm.imu_angle), static_cast<double>(dm.target_position));
+                    "%.4f,%.4f,%.4f,%.4f\r\n",
+                    static_cast<double>(pitch.imu_angle), static_cast<double>(pitch.target_position),
+                    static_cast<double>(yaw.angle), static_cast<double>(yaw.target));
                 if (n > 0 && static_cast<std::size_t>(n) < sizeof(vofa_text))
                     transmit_frame(vofa_text, static_cast<std::size_t>(n), vofa_text,
                                    static_cast<std::size_t>(n), &debug.dm_status_requested);

@@ -92,6 +92,7 @@ void cDebug::rxCallback(UART_HandleTypeDef *huart, uint16_t size)
             }
             if(!overflow && !std::strcmp(line,"pitch_status")) pitch_status_requested=true;
             if(!overflow && !std::strcmp(line,"test")) test_reply_requested=true;
+            if(!overflow && !std::strcmp(line,"imucheck")) imu_check_enabled=!imu_check_enabled;
             if(!overflow && !std::strcmp(line,"vision_status")) vision_status_requested=true;
             if(!overflow && !std::strcmp(line,"vision_disable")) vision_disable_requested=true;
             uint8_t vision_byte=0;
@@ -119,7 +120,9 @@ void cDebug::rxCallback(UART_HandleTypeDef *huart, uint16_t size)
                 yaw_gain_pending |= yaw_mask;
             }
             if(!overflow && (!std::strcmp(line,"ystop") || !std::strcmp(line,"stop")))
-                yaw_stop_requested=true;
+            { yaw_stop_requested=true; yaw_enable_requested=false; }
+            if(!overflow && !std::strcmp(line,"yenable") && !yaw_stop_requested)
+                yaw_enable_requested=true;
             float yaw_delta=0;
             if(!overflow && parse_yaw_delta(line,yaw_delta))
             { yaw_delta_deg=yaw_delta; yaw_delta_pending=true; }

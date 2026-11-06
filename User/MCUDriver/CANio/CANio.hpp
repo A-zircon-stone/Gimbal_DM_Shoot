@@ -7,6 +7,7 @@
 #include "can.h"
 #include "DamiaoMitPitchMonitor.hpp"
 #include "DamiaoMitPitchCommand.hpp"
+#include "DamiaoMitYawCommand.hpp"
 // 之前的 MIT 接收代码留作参考，V41 一控四暂不使用。
 #if 0
 #include "DamiaoFeedbackMonitor.hpp"
@@ -24,6 +25,11 @@ HAL_StatusTypeDef damiao_pitch_can_send_disable();
 HAL_StatusTypeDef damiao_pitch_can_send_control(const damiao_mit::Command &command);
 // 等待上一帧失能命令离开发送邮箱后，再提交使能命令。
 bool damiao_pitch_can_disable_tx_complete();
+damiao_mit_yaw::FeedbackSnapshot damiao_mit_yaw_feedback_snapshot();
+HAL_StatusTypeDef damiao_yaw_can_send_enable();
+HAL_StatusTypeDef damiao_yaw_can_send_disable();
+HAL_StatusTypeDef damiao_yaw_can_send_control(const damiao_mit::Command &command);
+bool damiao_yaw_can_disable_tx_complete();
 #if 0 // 之前的 V41 快照接口保留；pitch 已刷为标准 MIT 固件。
 damiao_v41::FeedbackSnapshot damiao_v41_feedback_snapshot();
 #endif

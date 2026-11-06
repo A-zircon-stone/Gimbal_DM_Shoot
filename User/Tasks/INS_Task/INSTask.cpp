@@ -15,6 +15,7 @@
 #include "PrintTelemetry.hpp"
 #include "Gimbal.hpp"
 #include "DamiaoPitchRuntime.hpp"
+#include "DamiaoYawRuntime.hpp"
 #define MPU6500_TEMP_PWM_MAX 5000
 INS_t INS;
 IMU_Param_t IMU_Param;
@@ -65,6 +66,7 @@ void INS_Task(void)
     if (!isfinite(dt) || dt <= 0.0f || dt > 0.02f)
     {
         damiao_pitch_runtime::invalidate_imu();
+        damiao_yaw_runtime::invalidate_imu();
         // 调试暂停/超期后丢弃这一帧，不用巨大dt推进姿态。
         ++count;
         return;
@@ -81,6 +83,7 @@ void INS_Task(void)
         if (!BMI088_gyro_id_valid)
         {
             damiao_pitch_runtime::invalidate_imu();
+            damiao_yaw_runtime::invalidate_imu();
             return;
         }
 
@@ -102,6 +105,7 @@ void INS_Task(void)
         IMU_QuaternionEKF_Update(INS.Gyro[X_], INS.Gyro[Y_], INS.Gyro[Z_], INS.Accel[X_], INS.Accel[Y_], INS.Accel[Z_], dt);
         if (!QEKF_INS.LastUpdateValid) {
             damiao_pitch_runtime::invalidate_imu();
+            damiao_yaw_runtime::invalidate_imu();
             return;
         }
 
@@ -128,6 +132,8 @@ void INS_Task(void)
         INS.YawTotalAngle = QEKF_INS.YawTotalAngle;
         // Roll 和 Gyro[Y_] 同一帧一起发布，不直接跨任务读取更新中的 INS。
         damiao_pitch_runtime::publish_imu(INS.Roll, INS.Gyro[Y_], HAL_GetTick());
+        damiao_yaw_runtime::publish_imu(INS.YawTotalAngle,INS.Roll,INS.Pitch,
+                                        INS.Gyro[Y_],INS.Gyro[Z_],HAL_GetTick());
         Gimbal.Publish_Pitch_Feedback(INS.q, INS.Gyro[Y_]);
         publish_print_imu(INS.Roll, INS.Pitch, INS.Yaw, INS.Gyro, INS.q);
     }
