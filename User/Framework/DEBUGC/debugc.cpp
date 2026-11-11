@@ -82,13 +82,13 @@ void cDebug::rxCallback(UART_HandleTypeDef *huart, uint16_t size)
 #endif
             // PID 数值先存入邮箱，由控制任务检查具体允许范围后使用。
             if (!overflow && parse_dm_float(line, "dm_kp=", dm_value) && dm_value >= 0) {
-                dm_kp = dm_value; dm_gain_pending |= 1u;
+                pitch_speed_kp = dm_value; pitch_speed_gain_pending |= 1u;
             }
             if (!overflow && parse_dm_float(line, "dm_ki=", dm_value) && dm_value >= 0) {
-                dm_ki = dm_value; dm_gain_pending |= 2u;
+                pitch_speed_ki = dm_value; pitch_speed_gain_pending |= 2u;
             }
             if (!overflow && parse_dm_float(line, "dm_kd=", dm_value) && dm_value >= 0) {
-                dm_kd = dm_value; dm_gain_pending |= 4u;
+                pitch_speed_kd = dm_value; pitch_speed_gain_pending |= 4u;
             }
             if(!overflow && !std::strcmp(line,"pitch_status")) pitch_status_requested=true;
             if(!overflow && !std::strcmp(line,"test")) test_reply_requested=true;

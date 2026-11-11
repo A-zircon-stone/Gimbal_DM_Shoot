@@ -10,6 +10,7 @@
 #include "DamiaoYawRuntime.hpp"
 #include "GimbalRemotePolicy.hpp"
 #include "remotec.hpp"
+#include "CANio.hpp"
 
 
 void Task_Gimbal(void *argument)
@@ -27,10 +28,13 @@ void Task_Gimbal(void *argument)
         // 遥控器离线或不在遥控模式时，摇杆按0处理，保持已有目标。
         rc_arbitration();
         RC_Levers();
+        taskENTER_CRITICAL();
         const bool dr16_selected = Controller == eDR16;
         const bool remote_online = dr16_selected && dr16.online;
-        const uint8_t s1 = dr16_selected ? dr16.value().rc.s[1] : gimbal_remote_policy::SwitchMiddle;
-        const uint8_t s2 = dr16_selected ? dr16.value().rc.s[0] : gimbal_remote_policy::SwitchMiddle;
+        const auto remote = dr16.value();
+        taskEXIT_CRITICAL();
+        const uint8_t s1 = dr16_selected ? remote.rc.s[1] : gimbal_remote_policy::SwitchMiddle;
+        const uint8_t s2 = dr16_selected ? remote.rc.s[0] : gimbal_remote_policy::SwitchMiddle;
         const auto selection = gimbal_remote_policy::select(remote_online, s1, s2);
         AimMode = selection.autoaim_mode ? eAutoaim : eManual;
 
@@ -69,6 +73,27 @@ void Task_Gimbal(void *argument)
         const float vision_yaw_rad = Gimbal.Vision_Control.target.yaw;
         damiao_yaw_runtime::step(now, yaw_stick, selection.protected_mode,
                                  vision_target_active, vision_yaw_rad);
+
+        ShooterInput shooter_input{};
+        shooter_input.remote_online = remote_online;
+        shooter_input.s1 = s1;
+        shooter_input.s2 = s2;
+        shooter_input.feeder_stick = remote.rc.ch[3];
+        shooter_input.vision_fire_allowed = vision_target_active &&
+                                            Gimbal.Vision_Control.target.fire == 1;
+        taskENTER_CRITICAL();
+        shooter_input.left_online = Gimbal.Motor_Left_Fric.Wdg.isOnline == OnlineState_t::ONLINE;
+        shooter_input.right_online = Gimbal.Motor_Right_Fric.Wdg.isOnline == OnlineState_t::ONLINE;
+        shooter_input.left_speed_rpm = Gimbal.Motor_Left_Fric.Spe;
+        shooter_input.right_speed_rpm = Gimbal.Motor_Right_Fric.Spe;
+        shooter_input.feeder_speed_rpm = Gimbal.Motor_Feeder.speed_rpm;
+        taskEXIT_CRITICAL();
+        Gimbal.Shooter_Output = Gimbal.Shooter.step(shooter_input);
+        const auto &shoot = Gimbal.Shooter_Output;
+        Gimbal.Shooter_CanStatus = shooter_can_send_currents(shoot.left_current,
+                                                           shoot.right_current,
+                                                           shoot.feeder_current);
+        FricCtrlMode = shoot.friction_enabled ? eFric_OPEN : eFric_SHUT;
         // Gimbal.Gimbal_Loop();
 
         vTaskDelayUntil(&t,2);

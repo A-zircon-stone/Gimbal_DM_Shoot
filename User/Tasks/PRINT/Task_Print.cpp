@@ -218,7 +218,10 @@ void Task_Print(void *argument)
             }
             else if(vision_status_requested)
             {
+                taskENTER_CRITICAL();
                 const auto remote = dr16.value();
+                const auto ctrl_mode = CtrlMode;
+                taskEXIT_CRITICAL();
                 const auto pitch_runtime = damiao_pitch_runtime::snapshot();
                 const auto yaw_runtime = damiao_yaw_runtime::snapshot();
                 const int n=std::snprintf(vofa_text,sizeof(vofa_text),
@@ -234,8 +237,8 @@ void Task_Print(void *argument)
                     static_cast<unsigned>(vision_packet.mode),static_cast<unsigned>(vision_packet.fire),vision_control.reason,
                     static_cast<unsigned>(yaw_tune.enabled),static_cast<unsigned>(tune.enabled),
                     static_cast<double>(yaw_tune.target_yaw_deg),static_cast<double>(tune.target_roll_deg),
-                    static_cast<unsigned>(CtrlMode),static_cast<unsigned>(static_cast<unsigned char>(remote.rc.s[0])),
-                    static_cast<unsigned>(static_cast<unsigned char>(remote.rc.s[1])),
+                    static_cast<unsigned>(ctrl_mode),static_cast<unsigned>(static_cast<unsigned char>(remote.rc.s[1])),
+                    static_cast<unsigned>(static_cast<unsigned char>(remote.rc.s[0])),
                     static_cast<int>(remote.rc.ch[0]),static_cast<int>(remote.rc.ch[1]),
                     static_cast<unsigned>(pitch_runtime.state),pitch_runtime.reason,
                     static_cast<unsigned>(pitch_runtime.imu_fresh),static_cast<unsigned>(pitch_runtime.feedback_fresh),

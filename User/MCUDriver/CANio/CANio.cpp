@@ -11,6 +11,7 @@
 #include "usart.h"
 #include "PitchDirectionTest.hpp"
 #include "DamiaoMailboxOwners.hpp"
+#include "ShooterCan.hpp"
 
 namespace {
 // MIT 的接收观察器保留，但不参与 V41 一控四的接收流程。
@@ -178,6 +179,90 @@ HAL_StatusTypeDef damiao_yaw_can_send_control(const damiao_mit::Command &command
     if (!damiao_mit_yaw::make_control_frame(command,frame)) return HAL_ERROR;
     return damiao_yaw_submit(frame,true);
 }
+HAL_StatusTypeDef damiao_can_send_torque_frame(
+    const damiao::CanFrame& frame)
+{
+    // 1. 判断报文发给哪台电机
+    bool is_pitch =
+        frame.id == gimbal_tuning::pitch::MotorCanId;
+
+    bool is_yaw =
+        frame.id == gimbal_tuning::yaw::MotorCanId;
+
+    if (!is_pitch && !is_yaw)
+    {
+        return HAL_ERROR;
+    }
+
+    // 2. 沿用现有逻辑，等待之前的失能帧发送完成
+    if (is_pitch && !damiao_pitch_can_disable_tx_complete())
+    {
+        return HAL_BUSY;
+    }
+
+    if (is_yaw && !damiao_yaw_can_disable_tx_complete())
+    {
+        return HAL_BUSY;
+    }
+
+    // 3. 填写STM32 HAL需要的CAN帧头
+    CAN_TxHeaderTypeDef header{};
+
+    header.StdId = frame.id;
+    header.IDE = CAN_ID_STD;
+    header.RTR = CAN_RTR_DATA;
+    header.DLC = 8;
+
+    // 4. 复制8个数据字节
+    uint8_t bytes[8]{};
+
+    for (int i = 0; i < 8; i++)
+    {
+        bytes[i] = frame.data[i];
+    }
+
+    // 5. 提交到CAN1发送邮箱
+    uint32_t mailbox = 0;
+
+    HAL_StatusTypeDef result = HAL_CAN_AddTxMessage(
+        &hcan1,
+        &header,
+        bytes,
+        &mailbox
+    );
+
+    // 6. 沿用现有的邮箱归属记录
+    if (result == HAL_OK)
+    {
+        owners.reuse(mailbox);
+
+        if (is_pitch)
+        {
+            owners.pitch_motion |= mailbox;
+        }
+        else
+        {
+            owners.yaw_motion |= mailbox;
+        }
+    }
+
+    return result;
+}
+HAL_StatusTypeDef shooter_can_send_currents(int16_t left, int16_t right, int16_t feeder)
+{
+    CAN_TxHeaderTypeDef header{};
+    header.StdId = gimbal_tuning::shooter::CommandId;
+    header.IDE = CAN_ID_STD;
+    header.RTR = CAN_RTR_DATA;
+    header.DLC = 8;
+    uint8_t bytes[8];
+    shooter_can::encode_currents(left, right, feeder, bytes);
+    uint32_t mailbox = 0;
+    const auto result = HAL_CAN_AddTxMessage(&hcan1, &header, bytes, &mailbox);
+    // 邮箱可能曾被达妙轴使用，必须清除旧归属，避免轴失能误撤销发射帧。
+    if (result == HAL_OK) owners.reuse(mailbox);
+    return result;
+}
 
 HAL_StatusTypeDef Cmd_Pitch_Direction_Test(int16_t raw_current)
 {
@@ -331,6 +416,13 @@ void  HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan)
                                                         rx_header.DLC, HAL_GetTick());
         (void)damiao_mit_yaw_feedback_monitor.receive(rx_header.StdId, rx_data,
                                                       rx_header.DLC, HAL_GetTick());
+        // 发射反馈单独接入，接收中断不发送电机命令。
+        if (rx_header.StdId == gimbal_tuning::shooter::LeftFeedbackId)
+            Gimbal.Motor_Left_Fric.Update_Info(rx_data);
+        else if (rx_header.StdId == gimbal_tuning::shooter::RightFeedbackId)
+            Gimbal.Motor_Right_Fric.Update_Info(rx_data);
+        else if (rx_header.StdId == gimbal_tuning::shooter::FeederFeedbackId)
+            (void)Gimbal.Motor_Feeder.update(rx_data, rx_header.DLC);
     }
     return;
 #if 0 // 旧 6020/发射链路暂不运行，后续发射机构单独适配后再整理。

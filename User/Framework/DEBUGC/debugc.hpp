@@ -30,18 +30,11 @@ public:
     volatile bool dm_enable_requested = false;
     volatile bool dm_target_pending = false;
     volatile float dm_target_rad = 0.0f; // 绝对 IMU 目标角度，单位 rad
-#if 0 // 旧的相对角度接口保留；现在用 dm_target 直接指定角度。
-    volatile bool dm_delta_pending = false;
-    volatile float dm_delta_rad = 0.0f;
-#endif
-    volatile uint8_t dm_gain_pending = 0; // bit0=kp, bit1=ki, bit2=kd
-    volatile float dm_kp = 0.0f;
-    volatile float dm_ki = 0.0f;
-    volatile float dm_kd = 0.0f;
     volatile bool dm_status_requested = false;
     volatile PitchTestRequest pitch_request = PitchTestRequest::None;
     volatile uint32_t pitch_request_ms = 0;
     volatile float pitch_delta_deg = 0;
+    // 达妙双环：kp/ki/kd及dm_kp/ki/kd写同一速度环邮箱；kpp写位置Kp。
     volatile float pitch_speed_kp = 0;
     volatile float pitch_speed_ki = 0;
     volatile float pitch_speed_kd = 0;

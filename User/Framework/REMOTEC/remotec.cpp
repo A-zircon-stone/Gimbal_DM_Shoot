@@ -121,10 +121,8 @@ void RC_Levers()
     if (Controller == eDR16)//DR16遥控器下
     {
 
-        if (dr16.value().rc.s[1] == 2)
-            CtrlMode = eKey; // 左拨杆下 → 键鼠模式
-        else
-            CtrlMode = eRC;
+        // S1=右拨杆s[1]：下档为手动发射，仍由摇杆控制。
+        CtrlMode = eRC;
 
     }
     else if (Controller == eVT03)

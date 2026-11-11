@@ -17,6 +17,8 @@
 #include "YawSpeedTune.hpp"
 #include "VisionLink.hpp"
 #include "RemoteControlProtection.hpp"
+#include "M2006Feedback.hpp"
+#include "ShooterControl.hpp"
 
 struct Cmd_t
 {
@@ -118,6 +120,10 @@ class Gimbal_t
     Motor_6020_t Motor_Yaw{0.0f};
     Motor_6020_t Motor_Pitch{0.0f};
     Motor_3508_t Motor_Left_Fric, Motor_Right_Fric;
+    M2006Feedback Motor_Feeder;
+    ShooterController Shooter;
+    ShooterOutput Shooter_Output{}; // 调试器可查看目标、到位状态和三路电流
+    uint32_t Shooter_CanStatus = 0; // 最近一次HAL提交结果；不代表电机已执行
 
     Pid_t Pitch_SpePid,Pitch_PosPid;
     Pid_t Yaw_SpePid,Yaw_PosPid;

@@ -74,14 +74,15 @@ int main()
     control.set_remote_online(true,10); control.enable(10);assert(control.uplink_mode()==1);
     assert(control.update(20,10,20,p)==VisionControl::Action::None); // 使能前旧帧不采用
     assert(control.update(22,11,22,p)==VisionControl::Action::Target && control.active);
-    assert(control.update(222,11,22,p)==VisionControl::Action::None && control.active);
-    assert(control.update(223,11,22,p)==VisionControl::Action::Hold && !control.active);
-    assert(control.update(224,11,22,p)==VisionControl::Action::None);
-    assert(control.update(225,12,225,p)==VisionControl::Action::Target);
-    assert(control.update(226,13,226,no_target)==VisionControl::Action::Hold && !control.active);
-    assert(control.update(228,14,228,p)==VisionControl::Action::Target);
+    const uint32_t deadline=22+VisionLinkConfig::RxTimeoutMs;
+    assert(control.update(deadline,11,22,p)==VisionControl::Action::None && control.active);
+    assert(control.update(deadline+1,11,22,p)==VisionControl::Action::Hold && !control.active);
+    assert(control.update(deadline+2,11,22,p)==VisionControl::Action::None);
+    assert(control.update(deadline+3,12,deadline+3,p)==VisionControl::Action::Target);
+    assert(control.update(deadline+4,13,deadline+4,no_target)==VisionControl::Action::Hold && !control.active);
+    assert(control.update(deadline+6,14,deadline+6,p)==VisionControl::Action::Target);
     control.disable();assert(!control.active && control.uplink_mode()==0);
-    assert(control.update(230,15,230,p)==VisionControl::Action::None);
+    assert(control.update(deadline+8,15,deadline+8,p)==VisionControl::Action::None);
     // 模式切换建立新的接收基线，非法上行模式回退空闲。
     for(uint8_t from=0;from<4;++from) for(uint8_t to=0;to<4;++to)
     {
@@ -92,11 +93,12 @@ int main()
         else assert(c.update(12,3,12,p)==VisionControl::Action::None);
     }
     control.enable(15);control.set_mode(255,15);assert(control.uplink_mode()==0 && !control.active);
-    // 计时器回绕仍以无符号时间差判断200ms超时。
+    // 计时器回绕仍按配置的超时判断，不依赖早期联调时的200ms默认值。
     VisionControl wrap;wrap.set_remote_online(true,0);wrap.enable(0);
     assert(wrap.update(0xfffffff0u,1,0xfffffff0u,p)==VisionControl::Action::Target);
     assert(wrap.update(0x20u,1,0xfffffff0u,p)==VisionControl::Action::None && wrap.active);
-    assert(wrap.update(0x100u,1,0xfffffff0u,p)==VisionControl::Action::Hold);
+    assert(wrap.update(0xfffffff0u+VisionLinkConfig::RxTimeoutMs,1,0xfffffff0u,p)==VisionControl::Action::None && wrap.active);
+    assert(wrap.update(0xfffffff0u+VisionLinkConfig::RxTimeoutMs+1,1,0xfffffff0u,p)==VisionControl::Action::Hold);
 
     VisionAxisTargets mapped;
     assert(map_vision_targets(p,-35,5,mapped));

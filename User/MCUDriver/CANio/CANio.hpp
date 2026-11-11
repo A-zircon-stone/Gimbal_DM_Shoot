@@ -8,11 +8,12 @@
 #include "DamiaoMitPitchMonitor.hpp"
 #include "DamiaoMitPitchCommand.hpp"
 #include "DamiaoMitYawCommand.hpp"
-// 之前的 MIT 接收代码留作参考，V41 一控四暂不使用。
-#if 0
-#include "DamiaoFeedbackMonitor.hpp"
-#include "DamiaoV41Monitor.hpp"
-#endif
+#include "DMMotor.hpp"
+
+// 发送BuildTorqueFrame生成的力矩报文
+HAL_StatusTypeDef damiao_can_send_torque_frame(
+     damiao::CanFrame& frame);
+
 
 void can_filter_init();
 // 从任务中取得 pitch 原始反馈快照；内部短暂屏蔽中断，防止读到半帧。
@@ -30,12 +31,9 @@ HAL_StatusTypeDef damiao_yaw_can_send_enable();
 HAL_StatusTypeDef damiao_yaw_can_send_disable();
 HAL_StatusTypeDef damiao_yaw_can_send_control(const damiao_mit::Command &command);
 bool damiao_yaw_can_disable_tx_complete();
-#if 0 // 之前的 V41 快照接口保留；pitch 已刷为标准 MIT 固件。
-damiao_v41::FeedbackSnapshot damiao_v41_feedback_snapshot();
-#endif
-#if 0 // 之前的 MIT 快照接口，保留但不参与编译
-damiao_can::FeedbackSnapshot damiao_feedback_snapshot();
-#endif
+// 与达妙轴在同一控制任务中提交：CAN1/0x200，DLC=8。
+HAL_StatusTypeDef shooter_can_send_currents(int16_t left, int16_t right, int16_t feeder);
+
 HAL_StatusTypeDef SendMessage_8(CAN_HandleTypeDef *hcan,uint32_t stdid,uint8_t *data);
 HAL_StatusTypeDef Cmd_Gimbal_Pitch(int16_t motor);
 // 只允许反馈模式内人工短脉冲测试。不是旧电机力矩接口。

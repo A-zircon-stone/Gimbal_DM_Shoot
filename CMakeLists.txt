@@ -47,6 +47,7 @@ add_executable(${CMAKE_PROJECT_NAME}
         User/Tasks/GIMBAL/Task_Gimbal.cpp
         User/Tasks/GIMBAL/Task_Gimbal.hpp
         User/Framework/GIMBAL/Gimbal.cpp
+        User/Framework/GIMBAL/ShooterControl.cpp
         User/Framework/GIMBAL/PitchTilt.cpp
         User/Framework/GIMBAL/legacy/CanDemoPid.cpp
         User/Framework/GIMBAL/PitchTilt.hpp
